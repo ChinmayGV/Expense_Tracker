@@ -5,10 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "server": "node server/index.js",
+    "server:watch": "node --watch server/index.js",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "express": "^5.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

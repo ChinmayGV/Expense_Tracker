@@ -2,6 +2,8 @@ node_modules/
 dist/
 dist-ssr/
 *.local
+server/data/*.sqlite
+server/data/*.sqlite-*
 
 .env
 .env.*
