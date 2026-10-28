@@ -6,6 +6,7 @@ import Dashboard from "./Dashboard.jsx";
 import ExpenseForm from "./ExpenseForm.jsx";
 import ExpenseDetails from "./ExpenseDetails.jsx";
 import ExpenseList from "./ExpenseList.jsx";
+import ImportExport from "./ImportExport.jsx";
 import Settings from "./Settings.jsx";
 
 function localMonthKey() {
@@ -153,6 +154,7 @@ function App() {
     ["budgets", "⌖", "Budgets"],
     ["analytics", "⌁", "Analytics"],
     ["categories", "◉", "Categories"],
+    ["import", "⇅", "Import"],
     ["settings", "⚙", "Settings"],
   ];
 
@@ -230,7 +232,8 @@ function App() {
           ) : activeView === "budgets" ? <BudgetManager budgets={budgets} categories={categories} month={localMonthKey()} onChanged={loadData} />
             : activeView === "categories" ? <CategoryManager categories={categories} onChanged={loadData} />
               : activeView === "analytics" ? <Analytics transactions={transactions} />
-                : <Settings accounts={accounts} onAccountsChanged={loadData} theme={theme} onThemeChange={setTheme} />}
+                : activeView === "import" ? <ImportExport transactions={filteredTransactions} categories={categories} accounts={accounts} onImported={loadData} />
+                  : <Settings accounts={accounts} onAccountsChanged={loadData} theme={theme} onThemeChange={setTheme} />}
         </div>
       </section>
 

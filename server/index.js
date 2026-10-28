@@ -6,7 +6,7 @@ const app = express();
 const port = Number(process.env.PORT) || 3001;
 
 app.disable("x-powered-by");
-app.use(express.json({ limit: "100kb" }));
+app.use(express.json({ limit: "1mb" }));
 
 app.get("/api/health", (_request, response) => {
   response.json({ status: "ok" });
@@ -232,6 +232,77 @@ app.get("/api/transactions/:id", (request, response) => {
   `).get(id);
   if (!row) return response.status(404).json({ error: "Transaction not found." });
   response.json(row);
+});
+
+app.post("/api/imports", (request, response) => {
+  const sourceName = typeof request.body?.source_name === "string" ? request.body.source_name.trim().slice(0, 120) : "CSV import";
+  const inputRows = request.body?.transactions;
+  if (!Array.isArray(inputRows) || inputRows.length === 0) {
+    return response.status(400).json({ error: "Select at least one valid transaction to import." });
+  }
+  if (inputRows.length > 500) return response.status(413).json({ error: "Import up to 500 transactions at a time." });
+
+  const validRows = [];
+  const invalidRows = [];
+  for (let index = 0; index < inputRows.length; index += 1) {
+    const result = validateTransaction(inputRows[index] ?? {}, database);
+    if (result.errors) invalidRows.push({ row: index + 1, fields: result.errors });
+    else validRows.push({ row: index + 1, value: result.value });
+  }
+  if (invalidRows.length) {
+    return response.status(400).json({ error: "Some transactions are invalid. No rows were imported.", invalid_rows: invalidRows });
+  }
+
+  const findDuplicate = database.prepare(`
+    SELECT id FROM transactions
+    WHERE amount_paise = ? AND type = ? AND occurred_at = ?
+      AND lower(description) = lower(?) AND category_id = ? AND account_id = ?
+      AND target_account_id IS ?
+    LIMIT 1
+  `);
+  const insertTransaction = database.prepare(`
+    INSERT INTO transactions (amount_paise, type, occurred_at, description, category_id,
+      payment_method, account_id, target_account_id, notes)
+    VALUES (@amount_paise, @type, @occurred_at, @description, @category_id,
+      @payment_method, @account_id, @target_account_id, @notes)
+  `);
+  const insertedDescriptions = new Set();
+  const duplicates = [];
+  const rowsToInsert = [];
+  for (const item of validRows) {
+    const value = item.value;
+    const signature = JSON.stringify([
+      value.amount_paise, value.type, value.occurred_at, value.description.toLowerCase(),
+      value.category_id, value.account_id, value.target_account_id,
+    ]);
+    if (insertedDescriptions.has(signature) || findDuplicate.get(
+      value.amount_paise, value.type, value.occurred_at, value.description,
+      value.category_id, value.account_id, value.target_account_id,
+    )) {
+      duplicates.push({ row: item.row, description: value.description });
+      continue;
+    }
+    insertedDescriptions.add(signature);
+    rowsToInsert.push(item);
+  }
+
+  let batchId = null;
+  if (rowsToInsert.length) {
+    const importRows = database.transaction(() => {
+      const batch = database.prepare("INSERT INTO import_batches (source_name, row_count) VALUES (?, ?)")
+        .run(sourceName || "CSV import", rowsToInsert.length);
+      for (const item of rowsToInsert) insertTransaction.run(item.value);
+      return batch.lastInsertRowid;
+    });
+    batchId = importRows();
+  }
+
+  response.status(rowsToInsert.length ? 201 : 200).json({
+    batch_id: batchId,
+    imported: rowsToInsert.length,
+    duplicates,
+    message: rowsToInsert.length ? "Transactions imported." : "All selected rows were duplicates.",
+  });
 });
 
 app.post("/api/transactions", (request, response) => {
