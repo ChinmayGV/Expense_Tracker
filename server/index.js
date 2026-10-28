@@ -12,6 +12,26 @@ app.get("/api/health", (_request, response) => {
   response.json({ status: "ok" });
 });
 
+if (process.env.NODE_ENV === "test") {
+  app.post("/api/test/reset", (_request, response) => {
+    const defaults = [
+      "Food and dining", "Groceries", "Transportation", "Fuel", "Shopping", "Rent", "Utilities",
+      "Entertainment", "Health", "Travel", "Education", "Subscriptions", "Salary and other income",
+      "Transfers", "Other",
+    ];
+    const resetData = database.transaction(() => {
+      database.prepare("DELETE FROM transactions").run();
+      database.prepare("DELETE FROM budgets").run();
+      database.prepare("DELETE FROM import_batches").run();
+      database.prepare("DELETE FROM accounts WHERE name != 'Cash'").run();
+      database.prepare(`DELETE FROM categories WHERE name NOT IN (${defaults.map(() => "?").join(", ")})`).run(...defaults);
+      database.prepare("DELETE FROM user_preferences").run();
+    });
+    resetData();
+    response.json({ reset: true });
+  });
+}
+
 app.get("/api/categories", (_request, response) => {
   const categories = database.prepare("SELECT id, name, kind, color FROM categories ORDER BY name").all();
   response.json(categories);

@@ -10,6 +10,9 @@
     "dev": "vite",
     "server": "node server/start.js",
     "server:watch": "node --watch server/start.js",
+    "server:test": "node server/start-test.js",
+    "cypress:open": "cypress open",
+    "cypress:run": "cypress run",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -21,6 +24,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
+    "cypress": "^16.2.0",
     "vite": "^6.0.7"
   }
 }
