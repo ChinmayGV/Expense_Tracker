@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Analytics from "./Analytics.jsx";
 import BudgetManager from "./BudgetManager.jsx";
+import CategoryFilter from "./CategoryFilter.jsx";
 import CategoryManager from "./CategoryManager.jsx";
 import Dashboard from "./Dashboard.jsx";
 import ExpenseForm from "./ExpenseForm.jsx";
@@ -221,7 +222,7 @@ function App() {
               </div>
               <div className="filter-card">
                 <label className="search-field"><span aria-hidden="true">⌕</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search transactions" aria-label="Search transactions" /></label>
-                <label className="select-filter"><span className="sr-only">Filter by category</span><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="all">All categories</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
+                <CategoryFilter categories={categories} value={categoryFilter} onChange={setCategoryFilter} />
                 <label className="select-filter"><span className="sr-only">Filter by type</span><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="all">All types</option><option value="expense">Expenses</option><option value="income">Income</option><option value="transfer">Transfers</option></select></label>
                 <label className="select-filter"><span className="sr-only">Sort transactions</span><select value={sortOrder} onChange={(event) => setSortOrder(event.target.value)}><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="amount-high">Highest amount</option></select></label>
               </div>
