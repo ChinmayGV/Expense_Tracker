@@ -24,7 +24,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
-    "cypress": "^16.2.0",
+    "cypress": "^15.21.1",
     "vite": "^6.0.7"
   }
 }
