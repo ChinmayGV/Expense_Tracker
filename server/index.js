@@ -1,6 +1,6 @@
 import express from "express";
 import { database } from "./database.js";
-import { accountTypes, transactionFilters, validateTransaction } from "./transactions.js";
+import { accountTypes, parseAmount, transactionFilters, validateTransaction } from "./transactions.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3001;
@@ -15,6 +15,126 @@ app.get("/api/health", (_request, response) => {
 app.get("/api/categories", (_request, response) => {
   const categories = database.prepare("SELECT id, name, kind, color FROM categories ORDER BY name").all();
   response.json(categories);
+});
+
+app.post("/api/categories", (request, response) => {
+  const name = typeof request.body?.name === "string" ? request.body.name.trim() : "";
+  const kind = request.body?.kind;
+  const color = typeof request.body?.color === "string" ? request.body.color : "#64748b";
+  const errors = {};
+  if (!name || name.length > 40) errors.name = "Enter a category name of up to 40 characters.";
+  if (!["income", "expense", "transfer", "both"].includes(kind)) errors.kind = "Choose a valid category type.";
+  if (!/^#[0-9a-fA-F]{6}$/.test(color)) errors.color = "Choose a valid six-digit hex color.";
+  if (Object.keys(errors).length) return response.status(400).json({ error: "Check the category details.", fields: errors });
+  try {
+    const result = database.prepare("INSERT INTO categories (name, kind, color) VALUES (?, ?, ?)").run(name, kind, color);
+    return response.status(201).json(database.prepare("SELECT id, name, kind, color FROM categories WHERE id = ?").get(result.lastInsertRowid));
+  } catch (error) {
+    if (error.code === "SQLITE_CONSTRAINT_UNIQUE") return response.status(409).json({ error: "A category with this name already exists." });
+    throw error;
+  }
+});
+
+app.put("/api/categories/:id", (request, response) => {
+  const id = Number(request.params.id);
+  if (!Number.isInteger(id) || id <= 0) return response.status(400).json({ error: "Invalid category ID." });
+  const existing = database.prepare("SELECT id FROM categories WHERE id = ?").get(id);
+  if (!existing) return response.status(404).json({ error: "Category not found." });
+  const name = typeof request.body?.name === "string" ? request.body.name.trim() : "";
+  const kind = request.body?.kind;
+  const color = typeof request.body?.color === "string" ? request.body.color : "#64748b";
+  const errors = {};
+  if (!name || name.length > 40) errors.name = "Enter a category name of up to 40 characters.";
+  if (!["income", "expense", "transfer", "both"].includes(kind)) errors.kind = "Choose a valid category type.";
+  if (!/^#[0-9a-fA-F]{6}$/.test(color)) errors.color = "Choose a valid six-digit hex color.";
+  if (Object.keys(errors).length) return response.status(400).json({ error: "Check the category details.", fields: errors });
+  const incompatibleTransaction = database.prepare(
+    "SELECT 1 FROM transactions WHERE category_id = ? AND type != ? AND ? != 'both' LIMIT 1",
+  ).get(id, kind, kind);
+  const incompatibleBudget = database.prepare(
+    "SELECT 1 FROM budgets WHERE category_id = ? LIMIT 1",
+  ).get(id);
+  if ((incompatibleTransaction && kind !== "both") || (incompatibleBudget && !["expense", "both"].includes(kind))) {
+    return response.status(409).json({ error: "This category type conflicts with assigned transactions or budgets." });
+  }
+  try {
+    database.prepare("UPDATE categories SET name = ?, kind = ?, color = ? WHERE id = ?").run(name, kind, color, id);
+    return response.json(database.prepare("SELECT id, name, kind, color FROM categories WHERE id = ?").get(id));
+  } catch (error) {
+    if (error.code === "SQLITE_CONSTRAINT_UNIQUE") return response.status(409).json({ error: "A category with this name already exists." });
+    throw error;
+  }
+});
+
+app.delete("/api/categories/:id", (request, response) => {
+  const id = Number(request.params.id);
+  if (!Number.isInteger(id) || id <= 0) return response.status(400).json({ error: "Invalid category ID." });
+  if (!database.prepare("SELECT 1 FROM categories WHERE id = ?").get(id)) return response.status(404).json({ error: "Category not found." });
+  const usedByTransaction = database.prepare("SELECT 1 FROM transactions WHERE category_id = ? LIMIT 1").get(id);
+  const usedByBudget = database.prepare("SELECT 1 FROM budgets WHERE category_id = ? LIMIT 1").get(id);
+  if (usedByTransaction || usedByBudget) return response.status(409).json({ error: "This category is in use. Reassign its transactions and budgets before deleting it." });
+  database.prepare("DELETE FROM categories WHERE id = ?").run(id);
+  response.status(204).end();
+});
+
+function validMonth(value) {
+  return typeof value === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
+}
+
+app.get("/api/budgets", (request, response) => {
+  const indiaNow = new Date(Date.now() + 330 * 60 * 1000);
+  const month = request.query.month ?? indiaNow.toISOString().slice(0, 7);
+  if (!validMonth(month)) return response.status(400).json({ error: "Month must use YYYY-MM format." });
+  const rows = database.prepare(`
+    SELECT b.id, b.month, b.category_id, c.name AS category, b.amount_paise,
+      COALESCE(SUM(t.amount_paise), 0) AS spent_paise
+    FROM budgets b
+    LEFT JOIN categories c ON c.id = b.category_id
+    LEFT JOIN transactions t ON t.type = 'expense'
+      AND substr(datetime(t.occurred_at, '+5 hours', '+30 minutes'), 1, 7) = b.month
+      AND (b.category_id IS NULL OR t.category_id = b.category_id)
+    WHERE b.month = ?
+    GROUP BY b.id
+    ORDER BY b.category_id IS NOT NULL, c.name
+  `).all(month);
+  response.json(rows.map((budget) => ({
+    ...budget,
+    remaining_paise: budget.amount_paise - budget.spent_paise,
+    utilization_percent: Math.round((budget.spent_paise / budget.amount_paise) * 100),
+  })));
+});
+
+app.post("/api/budgets", (request, response) => {
+  const month = request.body?.month;
+  const amountPaise = parseAmount(request.body?.amount);
+  let categoryId = null;
+  if (request.body?.category_id !== undefined && request.body?.category_id !== null && request.body?.category_id !== "") {
+    categoryId = Number(request.body.category_id);
+  }
+  if (!validMonth(month)) return response.status(400).json({ error: "Month must use YYYY-MM format." });
+  if (amountPaise === null) return response.status(400).json({ error: "Budget must be a positive amount with at most two decimal places." });
+  if (categoryId !== null) {
+    if (!Number.isInteger(categoryId)) return response.status(400).json({ error: "Invalid category ID." });
+    const category = database.prepare("SELECT kind FROM categories WHERE id = ?").get(categoryId);
+    if (!category || !["expense", "both"].includes(category.kind)) return response.status(400).json({ error: "Choose an expense category." });
+  }
+  const existing = categoryId === null
+    ? database.prepare("SELECT id FROM budgets WHERE month = ? AND category_id IS NULL").get(month)
+    : database.prepare("SELECT id FROM budgets WHERE month = ? AND category_id = ?").get(month, categoryId);
+  if (existing) {
+    database.prepare("UPDATE budgets SET amount_paise = ? WHERE id = ?").run(amountPaise, existing.id);
+    return response.json(database.prepare("SELECT id, month, category_id, amount_paise FROM budgets WHERE id = ?").get(existing.id));
+  }
+  const result = database.prepare("INSERT INTO budgets (month, category_id, amount_paise) VALUES (?, ?, ?)").run(month, categoryId, amountPaise);
+  response.status(201).json(database.prepare("SELECT id, month, category_id, amount_paise FROM budgets WHERE id = ?").get(result.lastInsertRowid));
+});
+
+app.delete("/api/budgets/:id", (request, response) => {
+  const id = Number(request.params.id);
+  if (!Number.isInteger(id) || id <= 0) return response.status(400).json({ error: "Invalid budget ID." });
+  const result = database.prepare("DELETE FROM budgets WHERE id = ?").run(id);
+  if (!result.changes) return response.status(404).json({ error: "Budget not found." });
+  response.status(204).end();
 });
 
 app.get("/api/accounts", (_request, response) => {
@@ -39,6 +159,33 @@ app.post("/api/accounts", (request, response) => {
     }
     throw error;
   }
+});
+
+app.put("/api/accounts/:id", (request, response) => {
+  const id = Number(request.params.id);
+  if (!Number.isInteger(id) || id <= 0) return response.status(400).json({ error: "Invalid account ID." });
+  if (!database.prepare("SELECT 1 FROM accounts WHERE id = ?").get(id)) return response.status(404).json({ error: "Account not found." });
+  const name = typeof request.body?.name === "string" ? request.body.name.trim() : "";
+  const type = request.body?.type;
+  if (!name || name.length > 60) return response.status(400).json({ error: "Enter an account name of up to 60 characters." });
+  if (!accountTypes.has(type)) return response.status(400).json({ error: "Choose a supported account type." });
+  try {
+    database.prepare("UPDATE accounts SET name = ?, type = ? WHERE id = ?").run(name, type, id);
+    return response.json(database.prepare("SELECT id, name, type FROM accounts WHERE id = ?").get(id));
+  } catch (error) {
+    if (error.code === "SQLITE_CONSTRAINT_UNIQUE") return response.status(409).json({ error: "An account with this name already exists." });
+    throw error;
+  }
+});
+
+app.delete("/api/accounts/:id", (request, response) => {
+  const id = Number(request.params.id);
+  if (!Number.isInteger(id) || id <= 0) return response.status(400).json({ error: "Invalid account ID." });
+  if (!database.prepare("SELECT 1 FROM accounts WHERE id = ?").get(id)) return response.status(404).json({ error: "Account not found." });
+  const usage = database.prepare("SELECT 1 FROM transactions WHERE account_id = ? OR target_account_id = ? LIMIT 1").get(id, id);
+  if (usage) return response.status(409).json({ error: "This account is used by a transaction. Reassign those transactions before deleting it." });
+  database.prepare("DELETE FROM accounts WHERE id = ?").run(id);
+  response.status(204).end();
 });
 
 app.get("/api/transactions", (request, response) => {

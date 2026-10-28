@@ -16,7 +16,7 @@ function queryDate(value, isEndDate = false) {
   return { value: date.toISOString(), inclusive: true };
 }
 
-function parseAmount(amount) {
+export function parseAmount(amount) {
   if (typeof amount !== "number" && typeof amount !== "string") return null;
   if (String(amount).trim() === "") return null;
   const parsed = Number(amount);
