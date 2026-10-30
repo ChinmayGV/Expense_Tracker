@@ -1,0 +1,4 @@
+description,amount,type,occurred_at,category,payment_method,account,notes
+Coffee beans,42.50,expense,2026-10-28T09:30:00.000Z,Food and dining,UPI,Cash,Market purchase
+Coffee beans,42.50,expense,2026-10-28T09:30:00.000Z,Food and dining,UPI,Cash,Market purchase
+Invalid zero,0,expense,2026-10-28T10:00:00.000Z,Food and dining,Cash,Cash,This row is invalid
